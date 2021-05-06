@@ -1,0 +1,339 @@
+---
+title: "Group B - RMarkdown"
+author: "Alain Grullon, Alberto De Roni, Francisco Mansilla, Rosamaria Mejia, Timo Bachmann, Umut Varol"
+date: "7/18/2020"
+output:
+  html_document:
+    fig_caption: yes
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    fig_caption: yes
+    keep_tex: yes
+    toc: yes
+---
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE}
+
+#Define related path
+folder_path <- "/Users/Umut Varol/Desktop/IE/PROGRAMMING IN R/GROUP ASSIGNMENT/"
+
+htmltools::img(src =knitr::image_uri(file.path(folder_path, ("Team B Logo.jpeg"))), alt = 'Team B Logo.jpeg', style = 'possition:absolute;left; width:450px;')
+
+```
+
+```{r setup, echo=FALSE, warning=FALSE, message = FALSE}
+library(rmarkdown)
+library(data.table)
+library(dplyr)
+library(knitr)
+knitr::opts_chunk$set(warning=FALSE, echo=FALSE, fig.width = 15)
+```
+
+<!-- Read the necessary datasets given with the problem -->
+
+```{r, echo = FALSE, message = FALSE}
+library(pander);
+library(xtable);
+#install.packages("summarytools")
+library(summarytools)
+
+
+#Read all the necessary files
+solar_data <- readRDS(file.path(folder_path,"solar_dataset.RData"));
+stations_location <- read.table(file.path(folder_path, "station_info.csv"), sep = ",",header = T);
+additional_variables <- readRDS(file.path(folder_path,"additional_variables.RData"));
+
+##Change the type of the first column to a date for data summarization purposes, temporarily.
+SolarData <- solar_data 
+SolarData$Date<-as.data.table(as.Date(strptime(solar_data$Date,format = "%Y%m%d")))
+
+```
+
+## Problem Definition
+
+Team B was presented with 98 solar energy stations and their respective production data, as well as some additional variables about weather conditions.
+
+Stations' locations can be observed in the interactive map included below.
+Please click on each station to see the station name.
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE}
+#install.packages("leaflet")
+library(leaflet)
+solar_data_cropped <- solar_data[1:(nrow(solar_data)-1796),1:99]
+stations_location_transposed <- as.data.table(transpose(stations_location)[2:4,])
+colnames(stations_location_transposed) <- colnames(solar_data_cropped[,-1])
+merged_dataset <- rbind(stations_location_transposed,solar_data_cropped[,-1])
+m <- leaflet()
+m <- addTiles(m)
+```
+
+
+```{r, echo=FALSE, include=TRUE,warning= FALSE, message = FALSE,out.width = '100%'}
+for (i in 1:98){
+  m <- addCircleMarkers(m, 
+                        lng=as.numeric(as.character(stations_location$elon[i])), 
+                        lat=as.numeric(as.character(stations_location$nlat[i])), 
+                        popup=paste(colnames(merged_dataset)[i],"-",sum(solar_data_cropped[,i+1])))
+}
+m %>%
+addLegend("bottomleft",colors = "blue",labels = "Location")
+
+```
+
+Team B was tasked with predicting the daily solar energy production of each station from 01.01.2008 to 30.11.2012 using the past production data given in the "solar_dataset" which can be visualized as following for station ACME as an example:
+
+*Green area includes predictions in the graph below.*
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE, out.width="100%"}
+
+#install.packages("dygraphs")
+library(dygraphs)
+
+kaggle_svm <- read.csv(file.path(folder_path, "kaggle_svm.csv"),header=T)
+KAGGLE_SVM <- kaggle_svm
+KAGGLE_SVM$Date <-as.data.table(as.Date(strptime(kaggle_svm$Date,format = "%Y%m%d")))
+colnames(KAGGLE_SVM[,1])<-"Date"
+Mergedplot <- rbind(SolarData[1:5113,1:99],KAGGLE_SVM)
+
+#res <- lapply(2:ncol(Mergedplot), function(e) #dygraph(cbind(Mergedplot[,1],Mergedplot[,..e]), main = #paste0(colnames(Mergedplot[,..e])," SVM PREDICTION")) %>% 
+#         dyRangeSelector(dateWindow = c("1994-01-01", "2012-11-30")) %>%
+#         dyShading(from = "2008-01-01",to="2012-11-30",color="#CCEBD6") %>%
+#         dyOptions(colors="#697485"))
+
+#htmltools::tagList(res)
+
+dygraph(cbind(Mergedplot[,1],Mergedplot[,2]), main = paste0(colnames(Mergedplot[,2])," SVM PREDICTION")) %>% 
+ dyRangeSelector(dateWindow = c("1994-01-01", "2012-11-30")) %>%
+ dyShading(from = "2008-01-01",to="2012-11-30",color="#CCEBD6") %>%
+ dyOptions(colors="#697485")
+
+```
+
+*Code for drawing the same graph for each station is available in the R Markdown file. Only one was displayed as an example for visualization matters.*
+
+## Data Exploration
+
+First of all, Team B performed an exploratory analysis on the "solar_dataset"  given. The results can be observed below:
+
+```{r, echo = FALSE, plain.ascii = FALSE, results='asis'}
+
+st_css()
+print(dfSummary(SolarData, valid.col = TRUE, graph.magnif = 0.75), max.tbl.height = 300, method = "render")
+
+```
+
+## Missing Values Analysis
+
+It can be seen from the summary table that observations for PCAs are complete yet, there are NA values regarding the stations. Thus, further investigation will be performed on station data for the validation of NAs belonging to the entries of the dates that need prediction.
+
+```{r, echo = FALSE, include=FALSE}
+
+NA_matrix_dt <- as.data.table(!is.na(solar_data[,2:99]))
+NA_matrix_dt[,apply(.SD,2,which.min)]
+
+```
+
+It can be observed that for all stations in the solar data set, NAs start from the same row number: 5114 and the number of columns whose NAs does not start from 5114 is `r sum(sum(NA_matrix_dt[,2:98][,apply(.SD,2,which.min)]<5114),sum(NA_matrix_dt[,apply(.SD,2,which.min)]>5114))`.
+
+Thus, we can conclude that the NAs indeed belong to the forecasting period for all stations.
+
+For the adittional data given, number of NAs were examined.
+The below graph shows the percentage (%) of NAs existing in the dataset for each additional variable at start with black dots.
+
+Since the number of NAs are respectively high, Team B has imputed the NAs with the median.
+In the following plot, it can be seen from the red dots that the count of uninformed variables have reduced to 0.
+
+```{r, echo=FALSE,out.width = '100%'}
+
+fill_missing_with_median <- function(x){
+  x <- as.numeric(x);
+  x[is.na(x)] <- median(x, na.rm = TRUE);
+  return(x);
+}
+
+additional_variables_imputed <- additional_variables[,lapply(.SD,fill_missing_with_median), .SDcols= setdiff(colnames(additional_variables),"Date")]
+
+library(ggplot2)
+
+  nas <- sapply(additional_variables[,-1], function(x){100*sum(is.na(x))/length(x)})
+  nas_2 <- as.data.table(nas)
+  nas_2 <- cbind(nas_2,as.data.table(labels(nas)))
+  nas_imputed <- as.data.table(sapply(additional_variables_imputed, function(x){100*sum(is.na(x))/length(x)}))
+  p <- ggplot(nas_2,aes(nas_2$V1,nas_2$nas))
+  p <- p + geom_point(color="black")
+  p <- p + geom_point(data = nas_imputed, aes(y=nas_imputed$V1),color="red")
+  p <- p + labs(x = "Variables", y = "Number of NAs") + theme(axis.text.x = element_text(angle = 90))
+  p
+
+```
+
+
+## Outlier detection
+
+Outlier existence control was performed for each column displaying the solar data production. 
+
+```{r, echo=FALSE}
+solar_data_cropped <- solar_data[1:(nrow(solar_data)-1796),]
+
+outlier_table <- c()
+for(i in 1:98){
+  if(length(boxplot.stats(unlist(solar_data_cropped[,i+1]),coef = 1.5,do.conf = TRUE,do.out = TRUE)$out)==0){
+    outlier_table <- c(outlier_table,NaN)
+  }
+  else{  
+    outlier_table <- c(outlier_table,boxplot.stats(unlist(solar_data_cropped[,i]),coef = 1.5,do.conf = TRUE,do.out = TRUE)$out)
+  }}
+
+```
+
+According to the analysis, number of columns without outliers: `r sum(is.na(outlier_table))` = number of stations. Thus, we can conclude that our data does not contain outliers.
+
+## Correlation Analysis
+
+Correlations between additional variables were checked. It can be seen in the below figure that the data has no negative correlations yet, there are respectively high correlations between some variables.
+
+```{r, echo=FALSE, warning= FALSE, message= FALSE, out.width= "%100",out.height= "%200"}
+corr <- cor(additional_variables_imputed)
+#install.packages("ggcorrplot")
+library(ggcorrplot)
+
+ggcorrplot(corr, hc.order = TRUE, outline.col = "white",type = "lower", tl.cex = 5, tl.srt = 90)
+
+```
+
+
+## Machine Learning Outputs
+
+For finding the best prediction approach, each model was ran for each station with the most important (relevant) variables yielding the following optimal parameters and error metrics:
+
+
+### SVM Model
+```{r, echo=FALSE, warning= FALSE, message = FALSE, results= 'asis'}
+
+S_VM <- read.csv(file.path(folder_path, "SVM_Info.csv"),header=T);
+names_SVM <- colnames(S_VM)
+variables_SVM <- S_VM[1:10,]
+epsilon_SVM <- S_VM[11,]
+C_SVM <- S_VM[12,]
+gamma_SVM <- S_VM[13,]
+MAE_SVM <- S_VM[14,]
+
+dt <- data.frame()
+
+for(i in 1:98){
+  dt <- rbind(dt,data.frame(Stations = names_SVM[i], ImpVars = paste(variables_SVM[,i],collapse=","), Optimal_Epsilon = epsilon_SVM[1,i], Optimal_C = C_SVM[1,i], Optimal_Gamma = gamma_SVM[1,i], MAE = MAE_SVM[1,i]));
+}
+
+#install.packages("kableExtra")
+library(kableExtra)
+knitr::kable(dt) %>%
+  kable_styling() %>%
+  scroll_box(height = "230px")
+
+```
+
+### Random Forest Model
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE, results= 'asis'}
+
+RF <- read.csv(file.path(folder_path, "Random Forest_Info.csv"),header=T);
+names_RF <- colnames(RF)
+variables_RF <- RF[1:10,]
+number_of_trees_RF <- RF[11,]
+mtry_RF <- RF[12,]
+node_size_RF <- RF[13,]
+MAE_RF <- RF[14,]
+
+dt <- data.frame()
+
+for(i in 1:98){
+  dt <- rbind(dt,data.frame(Stations = names_RF[i], ImpVars = paste(variables_RF[,i],collapse=","), Number_of_trees = number_of_trees_RF[1,i], Mtry = mtry_RF[1,i], Node_Size = node_size_RF[1,i], MAE = MAE_RF[1,i]));
+}
+
+knitr::kable(dt) %>%
+  kable_styling() %>%
+  scroll_box(height = "230px")
+
+```
+
+### Linear Regression Model
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE, results= 'asis'}
+
+LM <- read.csv(file.path(folder_path, "LM_Info.csv"),header=T);
+names_LM <- colnames(LM)
+variables_LM <- LM[1:10,]
+MAE_LM <- LM[11,]
+Intercept_LM <- LM[12,]
+Coeff_LM <- LM[13:22,]
+dt <- data.frame()
+rm(i)
+
+for(i in 1:98){
+  dt <- rbind(dt,data.frame(Stations = names_LM[i], 
+                            ImpVars = paste(variables_LM[,i],collapse=","), 
+                            Intercept = as.character(Intercept_LM[1,i]), 
+                            Coeffs = paste(Coeff_LM[,i],collapse=","), 
+                            MAE = MAE_LM[1,i]));
+}
+
+
+knitr::kable(dt) %>%
+  kable_styling() %>%
+  scroll_box(height = "230px")
+
+```
+
+Different models' predictions can be seen below:
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE, results= 'asis', out.width="100%"}
+
+library(dygraphs)
+
+SolarData <- solar_data
+SolarData$Date <-as.data.table(as.Date(strptime(SolarData$Date,format = "%Y%m%d")))
+
+kaggle_svm <- read.csv(file.path(folder_path, "kaggle_svm.csv"),header=T)
+KAGGLE_SVM <- kaggle_svm
+KAGGLE_SVM$Date <-as.data.table(as.Date(strptime(kaggle_svm$Date,format = "%Y%m%d")))
+colnames(KAGGLE_SVM[,1])<-"Date"
+
+kaggle_lm <- read.csv(file.path(folder_path, "kaggle_lm.csv"),header=T)
+KAGGLE_LM <- kaggle_lm
+KAGGLE_LM$Date <-as.data.table(as.Date(strptime(kaggle_lm$Date,format = "%Y%m%d")))
+colnames(KAGGLE_LM[,1])<-"Date"
+
+kaggle_rf <- read.csv(file.path(folder_path, "kaggle_RF.csv"),header=T)
+KAGGLE_RF <- kaggle_rf
+KAGGLE_RF$Date <-as.data.table(as.Date(strptime(kaggle_rf$Date,format = "%Y%m%d")))
+colnames(KAGGLE_RF[,1])<-"Date"
+
+MergedplotSVM <- rbind(SolarData[1:5113,1:99],KAGGLE_SVM)
+MergedplotLM <- rbind(SolarData[1:5113,1:99],KAGGLE_LM)
+MergedplotRF <- rbind(SolarData[1:5113,1:99],KAGGLE_RF)
+
+Mergedplot_ACME <- cbind(SolarData[,1],MergedplotSVM[,2],MergedplotLM[,2],MergedplotRF[,2])
+colnames(Mergedplot_ACME)<-c("Date","SVM","LM","RF")
+
+dygraph(Mergedplot_ACME, main = "ACME PREDICTION") %>% 
+ dyRangeSelector(dateWindow = c("1994-01-01", "2012-11-30")) %>%
+ dyShading(from = "2008-01-01",to="2012-11-30",color="#CCEBD6") %>%
+ dyLegend(width = 400) %>%
+ dyGroup(c("SVM","LM","RF"), drawPoints = F, color = c("#554BF0 ","#C162C6","#A6A6A6"))  
+ #dyOptions(colors = RColorBrewer::brewer.pal(3, "Spectral")) or Blues or Greys or html-codes
+
+
+### Code to run all plots for on every station for the best algorithm (SVM)
+
+#res <- lapply(2:ncol(MergedplotSVM), function(e) #dygraph(cbind(MergedplotSVM[,1],MergedplotSVM[,..e]), main = #paste0(colnames(MergedplotSVM[,..e])," SVM PREDICTION")) %>% 
+#         dyRangeSelector(dateWindow = c("1994-01-01", "2012-11-30")) %>%
+#         dyShading(from = "2008-01-01",to="2012-11-30",color="#CCEBD6") %>%
+#         dyOptions(colors="#697485"))
+
+#htmltools::tagList(res)
+###
+```
+
+*Predictions only for one station was displayed as an example for visualization matters.*
+
